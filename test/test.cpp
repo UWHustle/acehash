@@ -1,9 +1,35 @@
 #include "acehash/acehash.hpp"
 
-#include <cstdint>
 #include <iostream>
 #include <random>
 #include <unordered_set>
+
+using namespace acehash;
+
+template <typename Function, typename Config>
+void test(const std::vector<uint64_t> &keys_vector, Config config) {
+  Function function(keys_vector.begin(), keys_vector.end(), config);
+
+  std::vector<uint32_t> indices_vector(keys_vector.size());
+  std::unordered_set<uint32_t> indices_set;
+
+  std::transform(keys_vector.begin(),
+                 keys_vector.end(),
+                 indices_vector.begin(),
+                 [&](uint64_t key) { return function(key); });
+
+  indices_set = {indices_vector.begin(), indices_vector.end()};
+  if (indices_set.size() != keys_vector.size()) {
+    throw std::runtime_error("test failed");
+  }
+
+  function(keys_vector.size(), keys_vector.data(), indices_vector.data());
+
+  indices_set = {indices_vector.begin(), indices_vector.end()};
+  if (indices_set.size() != keys_vector.size()) {
+    throw std::runtime_error("test failed");
+  }
+}
 
 int main() {
   uint32_t num_keys = 100'000;
@@ -20,33 +46,21 @@ int main() {
 
   std::vector<uint64_t> keys_vector(keys_set.begin(), keys_set.end());
 
-  acehash::Config config;
+  std::vector<std::pair<double, double>> params = {{2.0, 1.0}, {2.0, 0.99}};
 
-  auto t0 = std::chrono::high_resolution_clock::now();
-  acehash::AceHash<uint64_t> m(keys_vector.begin(), keys_vector.end(), config);
+  for (auto [lambda, alpha] : params) {
+    test<AceHash<uint64_t, acehash::MultiplyAddHasher<uint64_t>, false, false>>(
+        keys_vector, Config<>{.lambda = lambda, .alpha = alpha});
+    test<AceHash<uint64_t, acehash::MultiplyAddHasher<uint64_t>, true, false>>(
+        keys_vector, Config<>{.lambda = lambda, .alpha = alpha});
+    test<AceHash<uint64_t, acehash::MultiplyAddHasher<uint64_t>, true, true>>(
+        keys_vector, Config<>{.lambda = lambda, .alpha = alpha});
 
-  auto t1 = std::chrono::high_resolution_clock::now();
-  std::cout << std::chrono::duration<double>(t1 - t0).count() << std::endl;
-
-  std::vector<uint32_t> positions_vector(num_keys);
-  auto t2 = std::chrono::high_resolution_clock::now();
-
-  //  for (uint32_t i = 0; i < num_keys; ++i) {
-  //    positions_vector[i] = m(keys_vector[i]);
-  //  }
-
-  m(num_keys, keys_vector.data(), positions_vector.data());
-
-  auto t3 = std::chrono::high_resolution_clock::now();
-  std::cout << std::chrono::duration<double>(t3 - t2).count() << std::endl;
-
-  std::unordered_set<uint32_t> positions_set(positions_vector.begin(),
-                                             positions_vector.end());
-
-  std::cout << positions_set.size() << std::endl;
-  std::cout << *std::max_element(positions_vector.begin(),
-                                 positions_vector.end())
-            << std::endl;
+#ifdef ACEHASH_ENABLE_TBB
+    test<AceHash<uint64_t>>(
+        keys_vector, Config<TBBScheduler>{.lambda = lambda, .alpha = alpha});
+#endif
+  }
 
   return 0;
 }

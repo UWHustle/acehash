@@ -2,7 +2,7 @@
 
 #include <bit>
 #include <cstdint>
-#include <iostream>
+#include <memory>
 #include <random>
 #include <type_traits>
 
@@ -34,7 +34,7 @@ public:
     initialize(gen);
   }
 
-  uint32_t operator()(const Key &key) { return (a_ * key + b_) >> 32; }
+  uint32_t operator()(const Key &key) const { return (a_ * key + b_) >> 32; }
 
 private:
   template <typename RandomGenerator> void initialize(RandomGenerator &gen) {
@@ -58,7 +58,7 @@ public:
   explicit MultiplyAddHasher(RandomGenerator &gen)
       : hasher_lo_(gen), hasher_hi_(gen) {}
 
-  uint32_t operator()(const Key &key) {
+  uint32_t operator()(const Key &key) const {
     return hasher_lo_((uint32_t)key) ^ hasher_hi_((uint32_t)(key >> 32));
   }
 
@@ -378,7 +378,9 @@ public:
     return result;
   }
 
-  void fill_with_unoccupied(std::vector<uint32_t> &slot_indices) {
+  std::vector<uint32_t> get_unoccupied_slot_indices(uint32_t num_slot_indices) {
+    std::vector<uint32_t> slot_indices(num_slot_indices);
+
     auto it = slot_indices.begin();
 
     for (uint32_t line_index = 0; line_index < lines_.size(); ++line_index) {
@@ -393,6 +395,8 @@ public:
         line ^= uint16_t(1) << n;
       }
     }
+
+    return std::move(slot_indices);
   }
 
 private:
@@ -446,11 +450,6 @@ private:
   std::vector<Mutex> locks_;
 };
 
-struct DefaultOptimizations {
-  static constexpr bool multi_round_partition = true;
-  static constexpr bool multi_slot_search = true;
-};
-
 struct SerialScheduler {
   template <typename Item> class ThreadLocal {
   public:
@@ -500,23 +499,38 @@ struct TBBScheduler {
 };
 #endif
 
-template <typename Scheduler = SerialScheduler> struct Config {
+template <typename Scheduler = SerialScheduler,
+          typename Generator = std::mt19937>
+struct Config {
   double lambda = 2.5;
   double alpha = 1.0;
+  Generator generator = Generator(0);
   Scheduler scheduler = {};
 };
 
-template <typename Key, typename Hasher, bool primary, typename Optimizations>
+template <typename Key,
+          typename Hasher,
+          bool multi_round_partition,
+          bool multi_slot_search>
 class Node {
 public:
-  template <typename KeyIterator, typename Scheduler = SerialScheduler>
-  Node(KeyIterator begin, KeyIterator end, Config<Scheduler> config = {}) {
+  Node() = default;
+
+  template <typename KeyIterator,
+            typename Scheduler = SerialScheduler,
+            typename Generator = std::mt19937>
+  Node(KeyIterator begin,
+       KeyIterator end,
+       Config<Scheduler, Generator> config = {}) {
+    hasher_1_ = Hasher(config.generator);
+    hasher_2_ = Hasher(config.generator);
+    hasher_3_ = Hasher(config.generator);
+
     uint32_t num_keys = std::distance(begin, end);
 
-    std::cout << "num_keys: " << num_keys << std::endl;
-
     num_seeds_ = std::ceil(num_keys / config.lambda);
-    num_slots_ = std::ceil(num_keys / config.alpha);
+    num_slots_ =
+        config.alpha == 1.0 ? num_keys : std::ceil(num_keys / config.alpha);
     num_lines_ = num_slots_ / 16 + (num_slots_ % 16 != 0);
 
     Partitions<Key> buckets(
@@ -525,9 +539,9 @@ public:
         num_seeds_,
         config.scheduler,
         [&](const Key &key) { return get_seed_index(key); },
-        Optimizations::multi_round_partition);
+        multi_round_partition);
 
-    uint32_t num_groups = 100;
+    uint32_t num_groups = 64;
     Partitions<uint32_t> groups(
         IndexGenerator(),
         num_seeds_,
@@ -557,7 +571,7 @@ public:
 
         local_indices.resize(bucket.length());
 
-        if constexpr (primary && Optimizations::multi_slot_search) {
+        if constexpr (multi_slot_search) {
           seed = UINT8_MAX;
           for (uint8_t seed_1 = 0; seed_1 < 15; ++seed_1) {
             std::transform(
@@ -601,33 +615,35 @@ public:
     }
 
     if (!next_keys.empty()) {
-      offsets_.resize(next_keys.size());
-      occupied.fill_with_unoccupied(offsets_);
+      offsets_ = occupied.get_unoccupied_slot_indices(next_keys.size());
 
-      // TODO: Make sure this is minimal.
-      next_ = std::make_unique<Node<Key, Hasher, false, Optimizations>>(
+      config.lambda = 2.0;
+      config.alpha = 1.0;
+      next_ = std::make_unique<Node<Key, Hasher, multi_round_partition, false>>(
           next_keys.begin(), next_keys.end(), std::move(config));
     }
   }
 
-  uint32_t operator()(const Key &key) {
+  uint32_t operator()(const Key &key) const {
     uint8_t seed = seeds_[get_seed_index(key)];
 
     if (seed == UINT8_MAX) {
       return offsets_[(*next_)(key)];
     }
 
-    if constexpr (primary && Optimizations::multi_slot_search) {
+    if constexpr (multi_slot_search) {
       return get_line_index(key, seed / 16) * 16 + seed % 16;
     }
 
     return get_slot_index(key, seed);
   }
 
-  void operator()(size_t n, const Key *keys, uint32_t *slot_indices) {
+  void operator()(size_t n, const Key *keys, uint32_t *slot_indices) const {
     constexpr size_t batch_length = 128;
 
-    for (size_t i = 0; i < n / batch_length * batch_length; i += batch_length) {
+    size_t bound = n / batch_length * batch_length;
+
+    for (size_t i = 0; i < bound; i += batch_length) {
       uint32_t seed_indices[batch_length];
       for (size_t j = 0; j < batch_length; ++j) {
         seed_indices[j] = get_seed_index(keys[i + j]);
@@ -638,7 +654,7 @@ public:
         seeds[j] = seeds_[seed_indices[j]];
       }
 
-      if constexpr (primary && Optimizations::multi_slot_search) {
+      if constexpr (multi_slot_search) {
         uint32_t line_indices[batch_length];
         for (size_t j = 0; j < batch_length; ++j) {
           line_indices[j] = get_line_index(keys[i + j], seeds[j] / 16);
@@ -660,32 +676,38 @@ public:
       }
     }
 
-    for (size_t i = n / batch_length * batch_length; i < n; ++i) {
+    for (size_t i = bound; i < n; ++i) {
       slot_indices[i] = (*this)(keys[i]);
     }
   }
 
-  uint32_t num_slots() { return num_slots_; }
+  [[nodiscard]] uint32_t num_slots() const { return num_slots_; }
+
+  [[nodiscard]] uint32_t num_bits() const {
+    uint32_t num_bits = 8 * seeds_.size() + 32 * offsets_.size();
+    if (next_) {
+      num_bits += next_->num_bits();
+    }
+
+    return num_bits;
+  }
 
 private:
-  uint32_t reduce(uint32_t a, uint32_t b) { return (uint64_t)a * b >> 32; }
+  static uint32_t reduce(uint32_t a, uint32_t b) {
+    return (uint64_t)a * b >> 32;
+  }
 
-  uint32_t get_seed_index(const Key &key) {
+  uint32_t get_seed_index(const Key &key) const {
     return reduce(hasher_1_(key), num_seeds_);
   }
 
-  uint32_t get_slot_index(const Key &key, uint8_t seed) {
+  uint32_t get_slot_index(const Key &key, uint8_t seed) const {
     return reduce(hasher_2_(key) * seed + hasher_3_(key), num_slots_);
   }
 
-  uint32_t get_line_index(const Key &key, uint8_t seed) {
+  uint32_t get_line_index(const Key &key, uint8_t seed) const {
     return reduce(hasher_2_(key) * seed + hasher_3_(key), num_lines_);
   }
-
-  template <typename KeyIterator, typename Scheduler = SerialScheduler>
-  void construct(KeyIterator begin,
-                 KeyIterator end,
-                 const Config<Scheduler> &config) {}
 
   Hasher hasher_1_;
   Hasher hasher_2_;
@@ -695,10 +717,13 @@ private:
   uint32_t num_lines_;
   std::vector<uint8_t> seeds_;
   std::vector<uint32_t> offsets_;
-  std::unique_ptr<Node<Key, Hasher, false, Optimizations>> next_;
+  std::unique_ptr<Node<Key, Hasher, multi_round_partition, false>> next_;
 };
 
-template <typename Key, typename Hasher = MultiplyAddHasher<Key>>
-using AceHash = Node<Key, Hasher, true, DefaultOptimizations>;
+template <typename Key,
+          typename Hasher = MultiplyAddHasher<Key>,
+          bool multi_round_partition = true,
+          bool multi_slot_search = true>
+using AceHash = Node<Key, Hasher, multi_round_partition, multi_slot_search>;
 
 } // namespace acehash
