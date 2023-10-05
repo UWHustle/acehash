@@ -9,7 +9,12 @@ project(acehash)
 set(CMAKE_CXX_STANDARD 20)
 
 add_library(acehash INTERFACE)
-target_include_directories(acehash INTERFACE include)
+target_include_directories(
+        acehash
+        INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
 
 if (ACEHASH_ENABLE_TBB)
     target_compile_definitions(acehash INTERFACE ACEHASH_ENABLE_TBB)
