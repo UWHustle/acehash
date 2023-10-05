@@ -71,17 +71,16 @@ void bench_function_acehash(const std::vector<Key> &keys,
 template <bool minimal, typename Key>
 void bench_function_pthash(const std::vector<Key> &keys,
                            double c,
-                           double alpha,
-                           bool parallel) {
+                           double alpha) {
   bench_function<PTHashFunction<Key, pthash::partitioned_compact, minimal>>(
-      keys, c, alpha, parallel);
+      keys, c, alpha);
   bench_function<PTHashFunction<Key, pthash::dictionary_dictionary, minimal>>(
-      keys, c, alpha, parallel);
+      keys, c, alpha);
   bench_function<PTHashFunction<Key, pthash::elias_fano, minimal>>(
-      keys, c, alpha, parallel);
+      keys, c, alpha);
 }
 
-template <typename Key> void bench_function_integer(size_t n) {
+template <typename Key> void bench_function_integer_1(size_t n) {
   std::vector<Key> keys = generate_integer_keys<Key>(n, generator);
 
   for (double lambda : {1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5}) {
@@ -98,16 +97,36 @@ template <typename Key> void bench_function_integer(size_t n) {
 
   for (double c : {4.0, 5.0, 6.0, 7.0, 8.0, 9.0}) {
     for (double alpha : {0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.98}) {
-      for (bool parallel : {false, true}) {
-        bench_function_pthash<false>(keys, c, alpha, parallel);
-        bench_function_pthash<true>(keys, c, alpha, parallel);
-      }
+      bench_function_pthash<false>(keys, c, alpha);
+      bench_function_pthash<true>(keys, c, alpha);
     }
   }
 }
 
+template <typename Key> void bench_function_integer_2(size_t n) {
+  std::vector<uint64_t> keys = generate_integer_keys<uint64_t>(n, generator);
+
+  bench_function_acehash(keys, 4.0, 0.8);
+  bench_function_acehash(keys, 2.5, 1.0);
+
+  for (double gamma : {2.0, 5.0}) {
+    for (bool parallel : {false, true}) {
+      bench_function<BBHashFunction<Key>>(keys, gamma, parallel);
+    }
+  }
+
+  bench_function<PTHashFunction<Key, pthash::dictionary_dictionary, false>>(
+      keys, 5.0, 0.8);
+  bench_function<PTHashFunction<Key, pthash::dictionary_dictionary, true>>(
+      keys, 8.0, 0.98);
+}
+
 int main() {
-  bench_function_integer<uint64_t>(10'000'000);
+  bench_function_integer_1<uint64_t>(10'000'000);
+
+  for (size_t num_keys_e5 : {1, 2, 5, 10, 20, 50, 100, 200, 500, 1'000}) {
+    bench_function_integer_2<uint64_t>(num_keys_e5 * 100'000);
+  }
 
   return 0;
 }

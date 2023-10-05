@@ -177,18 +177,18 @@ private:
                                     uint32_t num_parts,
                                     const Scheduler &scheduler,
                                     const Function &function) {
-    constexpr uint32_t num_items_per_chunk = uint32_t(1) << 18;
-    constexpr uint32_t min_num_chunks = 1;
-    constexpr uint32_t max_num_chunks = 1000;
+    constexpr size_t num_items_per_chunk = uint32_t(1) << 18;
+    constexpr size_t min_num_chunks = 1;
+    constexpr size_t max_num_chunks = 1000;
 
-    uint32_t num_chunks = num_items / num_items_per_chunk;
+    size_t num_chunks = num_items / num_items_per_chunk;
     num_chunks = std::max(num_chunks, min_num_chunks);
     num_chunks = std::min(num_chunks, max_num_chunks);
 
     ItemBuffer dst_items(num_items);
     std::vector<uint32_t> bounds(num_chunks * num_parts);
 
-    scheduler.map(uint32_t(0), num_chunks, [&](uint32_t chunk_index) {
+    scheduler.map(size_t(0), num_chunks, [&](size_t chunk_index) {
       ItemIterator chunk_begin = src_items + chunk_index * num_items_per_chunk;
       ItemIterator chunk_end = chunk_index < num_chunks - 1
                                    ? chunk_begin + num_items_per_chunk
@@ -201,14 +201,14 @@ private:
 
     uint32_t count = 0;
     for (uint32_t part_index = 0; part_index < num_parts; ++part_index) {
-      for (uint32_t chunk_index = 0; chunk_index < num_chunks; ++chunk_index) {
+      for (size_t chunk_index = 0; chunk_index < num_chunks; ++chunk_index) {
         auto &offset = bounds[chunk_index * num_parts + part_index];
         count += offset;
         offset = count;
       }
     }
 
-    scheduler.map(uint32_t(0), num_chunks, [&](uint32_t chunk_index) {
+    scheduler.map(size_t(0), num_chunks, [&](size_t chunk_index) {
       ItemIterator chunk_begin = src_items + chunk_index * num_items_per_chunk;
       ItemIterator chunk_end = chunk_index < num_chunks - 1
                                    ? chunk_begin + num_items_per_chunk

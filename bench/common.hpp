@@ -10,45 +10,78 @@
 #include <sstream>
 #include <unordered_set>
 
-template <typename Key, typename Encoder, bool minimal> class PTHashFunction {
+template <typename Key,
+          bool multi_round_partition,
+          bool multi_slot_search,
+          bool multi_key_evaluate,
+          typename Scheduler = acehash::SerialScheduler>
+class AceHashFunction {
 public:
-  PTHashFunction() = default;
+  AceHashFunction() = default;
 
-  PTHashFunction(
-      size_t n, const Key *keys, double c, double alpha, bool parallel)
-      : c_(c), alpha_(alpha), parallel_(parallel) {
-    pthash::build_configuration config;
-    config.c = c_;
-    config.alpha = alpha_;
-    config.num_threads = parallel_ ? std::thread::hardware_concurrency() : 1;
-    config.verbose_output = false;
-    config.minimal_output = minimal;
-    function_.build_in_internal_memory(keys, n, config);
-  }
+  AceHashFunction(size_t n, const Key *keys, double lambda, double alpha)
+      : lambda_(lambda), alpha_(alpha),
+        function_(
+            keys,
+            keys + n,
+            acehash::Config<Scheduler>{.lambda = lambda_, .alpha = alpha_}) {}
 
   uint32_t operator()(const Key &key) const { return function_(key); }
 
   void operator()(size_t n, const Key *keys, uint32_t *indices) const {
-    for (size_t i = 0; i < n; ++i) {
-      indices[i] = (*this)(keys[i]);
+    if (multi_key_evaluate) {
+      function_(n, keys, indices);
+    } else {
+      for (size_t i = 0; i < n; ++i) {
+        indices[i] = (*this)(keys[i]);
+      }
     }
   }
+
+  [[nodiscard]] size_t num_slots() const { return function_.num_slots(); }
 
   [[nodiscard]] size_t num_bits() const { return function_.num_bits(); }
 
   [[nodiscard]] std::string description() const {
     std::ostringstream out;
-    out << "PTHash(" << c_ << ';' << alpha_ << ';' << parallel_ << ';'
-        << Encoder().name() << ';' << minimal << ')';
+    out << "AceHash;" << lambda_ << ';' << alpha_ << ';'
+        << multi_round_partition << ';' << multi_slot_search << ';'
+        << multi_key_evaluate << ';'
+        << !std::is_same_v<Scheduler, acehash::SerialScheduler>;
     return out.str();
   }
 
 private:
-  double c_{};
+  double lambda_{};
   double alpha_{};
-  bool parallel_{};
-  pthash::single_phf<pthash::murmurhash2_64, Encoder, minimal> function_;
+  acehash::AceHash<Key,
+                   acehash::MultiplyAddHasher<Key>,
+                   multi_round_partition,
+                   multi_slot_search>
+      function_;
 };
+
+template <typename Key>
+using AceHashFunctionV1 =
+    AceHashFunction<Key, false, false, false, acehash::SerialScheduler>;
+
+template <typename Key>
+using AceHashFunctionV2 =
+    AceHashFunction<Key, true, false, false, acehash::SerialScheduler>;
+
+template <typename Key>
+using AceHashFunctionV3 =
+    AceHashFunction<Key, true, true, false, acehash::SerialScheduler>;
+
+template <typename Key>
+using AceHashFunctionV4 =
+    AceHashFunction<Key, true, true, true, acehash::SerialScheduler>;
+
+#ifdef ACEHASH_ENABLE_TBB
+template <typename Key>
+using AceHashFunctionV5 =
+    AceHashFunction<Key, true, true, true, acehash::TBBScheduler>;
+#endif
 
 template <typename Key> class BBHashFunction {
 public:
@@ -93,7 +126,7 @@ public:
 
   [[nodiscard]] std::string description() const {
     std::ostringstream out;
-    out << "BBHash(" << gamma_ << ';' << parallel_ << ')';
+    out << "BBHash;" << gamma_ << ';' << parallel_;
     return out.str();
   }
 
@@ -114,78 +147,42 @@ private:
   Function function_;
 };
 
-template <typename Key,
-          bool multi_round_partition,
-          bool multi_slot_search,
-          bool multi_key_evaluate,
-          typename Scheduler = acehash::SerialScheduler>
-class AceHashFunction {
+template <typename Key, typename Encoder, bool minimal> class PTHashFunction {
 public:
-  AceHashFunction() = default;
+  PTHashFunction() = default;
 
-  AceHashFunction(size_t n, const Key *keys, double lambda, double alpha)
-      : lambda_(lambda), alpha_(alpha),
-        function_(
-            keys,
-            keys + n,
-            acehash::Config<Scheduler>{.lambda = lambda_, .alpha = alpha_}) {}
+  PTHashFunction(size_t n, const Key *keys, double c, double alpha)
+      : c_(c), alpha_(alpha) {
+    pthash::build_configuration config;
+    config.c = c_;
+    config.alpha = alpha_;
+    config.verbose_output = false;
+    config.minimal_output = minimal;
+    function_.build_in_internal_memory(keys, n, config);
+  }
 
   uint32_t operator()(const Key &key) const { return function_(key); }
 
   void operator()(size_t n, const Key *keys, uint32_t *indices) const {
-    if (multi_key_evaluate) {
-      function_(n, keys, indices);
-    } else {
-      for (size_t i = 0; i < n; ++i) {
-        indices[i] = (*this)(keys[i]);
-      }
+    for (size_t i = 0; i < n; ++i) {
+      indices[i] = (*this)(keys[i]);
     }
   }
-
-  [[nodiscard]] size_t num_slots() const { return function_.num_slots(); }
 
   [[nodiscard]] size_t num_bits() const { return function_.num_bits(); }
 
   [[nodiscard]] std::string description() const {
     std::ostringstream out;
-    out << "AceHash(" << lambda_ << ';' << alpha_ << ';'
-        << multi_round_partition << ';' << multi_slot_search << ';'
-        << multi_key_evaluate << ';'
-        << !std::is_same_v<Scheduler, acehash::SerialScheduler> << ')';
+    out << "PTHash;" << c_ << ';' << alpha_ << ';' << Encoder().name() << ';'
+        << minimal;
     return out.str();
   }
 
 private:
-  double lambda_{};
+  double c_{};
   double alpha_{};
-  acehash::AceHash<Key,
-                   acehash::MultiplyAddHasher<Key>,
-                   multi_round_partition,
-                   multi_slot_search>
-      function_;
+  pthash::single_phf<pthash::murmurhash2_64, Encoder, minimal> function_;
 };
-
-template <typename Key>
-using AceHashFunctionV1 =
-    AceHashFunction<Key, false, false, false, acehash::SerialScheduler>;
-
-template <typename Key>
-using AceHashFunctionV2 =
-    AceHashFunction<Key, true, false, false, acehash::SerialScheduler>;
-
-template <typename Key>
-using AceHashFunctionV3 =
-    AceHashFunction<Key, true, true, false, acehash::SerialScheduler>;
-
-template <typename Key>
-using AceHashFunctionV4 =
-    AceHashFunction<Key, true, true, true, acehash::SerialScheduler>;
-
-#ifdef ACEHASH_ENABLE_TBB
-template <typename Key>
-using AceHashFunctionV5 =
-    AceHashFunction<Key, true, true, true, acehash::TBBScheduler>;
-#endif
 
 template <typename Map, typename Key, typename Value> class ConventionalMap {
 public:

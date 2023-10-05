@@ -6,3 +6,6 @@
 /cmake-build-debug-remote
 /cmake-build-release-remote
 /cmake-build-relwithdebinfo-remote
+
+# Jupyter
+/bench/results/.ipynb_checkpoints
