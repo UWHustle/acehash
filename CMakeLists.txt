@@ -4,10 +4,6 @@ option(ACEHASH_ENABLE_TBB "Enable TBB" OFF)
 option(ACEHASH_BUILD_TESTS "Build tests" OFF)
 option(ACEHASH_BUILD_BENCHMARKS "Build benchmarks" OFF)
 
-if (ACEHASH_ENABLE_TBB)
-    list(APPEND VCPKG_MANIFEST_FEATURES "tbb")
-endif ()
-
 project(acehash)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -16,9 +12,18 @@ add_library(acehash INTERFACE)
 target_include_directories(acehash INTERFACE include)
 
 if (ACEHASH_ENABLE_TBB)
-    find_package(TBB CONFIG REQUIRED)
-    target_link_libraries(acehash INTERFACE TBB::tbb)
     target_compile_definitions(acehash INTERFACE ACEHASH_ENABLE_TBB)
+
+    include(FetchContent)
+
+    FetchContent_Declare(
+            oneTBB
+            GIT_REPOSITORY https://github.com/oneapi-src/oneTBB.git
+            GIT_TAG v2021.10.0
+    )
+    FetchContent_MakeAvailable(oneTBB)
+
+    target_link_libraries(acehash INTERFACE TBB::tbb)
 endif ()
 
 if (ACEHASH_BUILD_TESTS)

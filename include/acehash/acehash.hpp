@@ -7,8 +7,8 @@
 #include <type_traits>
 
 #ifdef ACEHASH_ENABLE_TBB
-#include <oneapi/tbb.h>
-#include <oneapi/tbb/mutex.h>
+#include "oneapi/tbb.h"
+#include "oneapi/tbb/mutex.h"
 #endif
 
 namespace acehash {
