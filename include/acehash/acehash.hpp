@@ -324,7 +324,7 @@ public:
     locks_ = std::vector<Mutex>(num_lines);
 
     if (num_slots % 16 != 0) {
-      lines_.back() |= uint16_t(1) << num_slots % 16;
+      lines_.back() |= UINT16_MAX << num_slots % 16;
     }
   }
 
@@ -514,7 +514,7 @@ template <typename Key,
           bool multi_slot_search>
 class Node {
 public:
-  Node() = default;
+  Node() : num_seeds_(0), num_slots_(0), num_lines_(0) {}
 
   template <typename KeyIterator,
             typename Scheduler = SerialScheduler,

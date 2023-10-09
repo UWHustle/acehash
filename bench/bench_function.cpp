@@ -4,8 +4,10 @@
 
 std::mt19937 generator(0); // NOLINT(cert-msc51-cpp)
 int num_trials = 5;
+int experiment;
 
 ResultsFile out("bench_function.csv",
+                "Experiment",
                 "Number of keys",
                 "Algorithm",
                 "Trial",
@@ -45,7 +47,8 @@ void bench_function(const std::vector<Key> &keys, Args... args) {
     t3 = 0.0;
 #endif
 
-    out.write(keys.size(),
+    out.write(experiment,
+              keys.size(),
               function.description(),
               trial,
               function.num_bits(),
@@ -81,6 +84,7 @@ void bench_function_pthash(const std::vector<Key> &keys,
 }
 
 template <typename Key> void bench_function_integer_1(size_t n) {
+  experiment = 1;
   std::vector<Key> keys = generate_integer_keys<Key>(n, generator);
 
   for (double lambda : {1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5}) {
@@ -104,6 +108,7 @@ template <typename Key> void bench_function_integer_1(size_t n) {
 }
 
 template <typename Key> void bench_function_integer_2(size_t n) {
+  experiment = 2;
   std::vector<uint64_t> keys = generate_integer_keys<uint64_t>(n, generator);
 
   bench_function_acehash(keys, 4.0, 0.8);

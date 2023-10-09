@@ -107,6 +107,8 @@ public:
     }
   }
 
+  [[nodiscard]] size_t num_slots() const { return function_.nbKeys(); }
+
   [[nodiscard]] size_t num_bits() const {
     int old_fd, new_fd;
     fflush(stdout);
@@ -169,6 +171,8 @@ public:
     }
   }
 
+  [[nodiscard]] size_t num_slots() const { return function_.table_size(); }
+
   [[nodiscard]] size_t num_bits() const { return function_.num_bits(); }
 
   [[nodiscard]] std::string description() const {
@@ -191,11 +195,18 @@ public:
   ConventionalMap(size_t n, const Key *keys, const Value *values)
       : map_(ZipIterator{keys, values}, ZipIterator{keys + n, values + n}) {}
 
-  void operator()(size_t n, const Key *keys, Value *values) {
+  template <typename Callback>
+  void operate(size_t n, const Key *keys, const Callback &callback) {
     for (size_t i = 0; i < n; ++i) {
-      values[i] = map_.at(keys[i]);
+      callback(i, map_.at(keys[i]));
     }
   }
+
+  void retrieve(size_t n, const Key *keys, Value *values) {
+    operate(n, keys, [&](size_t i, const Value &value) { values[i] = value; });
+  }
+
+  [[nodiscard]] size_t num_bits() const { return 0; }
 
 private:
   struct ZipIterator {
@@ -253,6 +264,89 @@ public:
   }
 };
 
+template <typename Key, typename Value> class VectorMap {
+public:
+  VectorMap() : alpha_(0.0) {}
+
+  VectorMap(size_t n, const Key *keys, const Value *values, double alpha)
+      : alpha_(alpha) {
+    uint32_t num_slots = std::ceil((double)n / alpha);
+
+    items_.resize(num_slots);
+
+    std::vector<bool> occupied(num_slots);
+
+    for (size_t i = 0; i < n; ++i) {
+      const Key &key = keys[i];
+      const Value &value = values[i];
+
+      auto initial_slot = occupied.begin() + get_initial_slot_index(key);
+
+      auto it = std::find(initial_slot, occupied.end(), false);
+
+      if (it == occupied.end()) {
+        it = std::find(occupied.begin(), initial_slot, false);
+        if (it == initial_slot) {
+          throw std::runtime_error("map is full");
+        }
+      }
+
+      items_[std::distance(occupied.begin(), it)] = {key, value};
+      *it = true;
+    }
+
+    occupied.clear();
+  }
+
+  [[nodiscard]] size_t num_bits() const {
+    return 8 * sizeof(std::pair<Key, Value>) * items_.size();
+  }
+
+  template <typename Callback>
+  void operate(size_t n, const Key *keys, const Callback &callback) {
+    for (size_t i = 0; i < n; ++i) {
+      const Key &key = keys[i];
+
+      auto initial_slot = items_.begin() + get_initial_slot_index(key);
+
+      auto it = std::find_if(initial_slot, items_.end(), [&](const auto &item) {
+        return item.first == key;
+      });
+
+      if (it == items_.end()) {
+        it = std::find_if(items_.begin(), initial_slot, [&](const auto &item) {
+          return item.first == key;
+        });
+
+        if (it == initial_slot) {
+          throw std::runtime_error("key not found");
+        }
+      }
+
+      callback(i, it->second);
+    }
+  }
+
+  void retrieve(size_t n, const Key *keys, Value *values) {
+    operate(n, keys, [&](size_t i, const Value &value) { values[i] = value; });
+  }
+
+  [[nodiscard]] std::string description() const {
+    std::ostringstream out;
+    out << "VectorMap;" << alpha_;
+    return out.str();
+  }
+
+private:
+  uint32_t get_initial_slot_index(const Key &key) {
+    return (uint64_t)hasher_(key) * items_.size() >> 32;
+  }
+
+  double alpha_;
+  acehash::MultiplyAddHasher<Key> hasher_;
+  std::vector<std::pair<Key, Value>> items_;
+};
+
 template <typename Function, typename Key, typename Value> class PerfectMap {
 public:
   PerfectMap() = default;
@@ -265,10 +359,32 @@ public:
     }
   }
 
-  void operator()(size_t n, const Key *keys, Value *values) {
-    for (size_t i = 0; i < n; ++i) {
-      values[i] = values_[function_(keys[i])];
+  template <typename Callback>
+  void operate(size_t n, const Key *keys, const Callback &callback) {
+    constexpr size_t batch_length = 128;
+
+    size_t i = 0;
+
+    for (; i < n / batch_length * batch_length; i += batch_length) {
+      uint32_t indices[batch_length];
+      function_(batch_length, &keys[i], indices);
+
+      for (size_t j = 0; j < batch_length; ++j) {
+        callback(i + j, values_[indices[j]]);
+      }
     }
+
+    for (; i < n; ++i) {
+      callback(i, values_[function_(keys[i])]);
+    }
+  }
+
+  void retrieve(size_t n, const Key *keys, Value *values) {
+    operate(n, keys, [&](size_t i, const Value &value) { values[i] = value; });
+  }
+
+  [[nodiscard]] size_t num_bits() const {
+    return function_.num_bits() + 8 * sizeof(Value) * values_.size();
   }
 
   [[nodiscard]] std::string description() const {
@@ -291,6 +407,15 @@ using AceHashMapV3 = PerfectMap<AceHashFunctionV3<Key>, Key, Value>;
 
 template <typename Key, typename Value>
 using AceHashMapV4 = PerfectMap<AceHashFunctionV4<Key>, Key, Value>;
+
+template <typename Key, typename Value>
+using BBHashMap = PerfectMap<BBHashFunction<Key>, Key, Value>;
+
+template <typename Key, typename Value, bool minimal>
+using PTHashMap =
+    PerfectMap<PTHashFunction<Key, pthash::dictionary_dictionary, minimal>,
+               Key,
+               Value>;
 
 class ResultsFile {
 public:
