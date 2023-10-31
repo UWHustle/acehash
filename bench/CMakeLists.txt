@@ -10,14 +10,20 @@ FetchContent_Declare(
         GIT_REPOSITORY https://github.com/rizkg/BBHash.git
         GIT_TAG 1803c23
 )
-FetchContent_MakeAvailable(bbhash)
+FetchContent_GetProperties(bbhash)
+if (NOT bbhash_POPULATED)
+    FetchContent_Populate(bbhash)
+endif ()
 
 FetchContent_Declare(
         pthash
         GIT_REPOSITORY https://github.com/jermp/pthash.git
         GIT_TAG 4098013
 )
-FetchContent_MakeAvailable(pthash)
+FetchContent_GetProperties(pthash)
+if (NOT pthash_POPULATED)
+    FetchContent_Populate(pthash)
+endif ()
 
 add_library(acehash_bench_common INTERFACE)
 target_include_directories(acehash_bench_common INTERFACE bench)

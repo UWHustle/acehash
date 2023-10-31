@@ -22,8 +22,6 @@ endif ()
 project(acehash)
 set(CMAKE_CXX_STANDARD 20)
 
-set(VCPKG_CMAKE_CONFIGURE_OPTIONS -DCMAKE_CXX_FLAGS="-march=native")
-
 add_library(acehash INTERFACE)
 target_include_directories(
         acehash
