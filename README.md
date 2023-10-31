@@ -4,7 +4,7 @@ AceHash is a performance-focused perfect hashing scheme. A perfect hash function
 
 ## Usage
 
-AceHash is provided as a header-only library written in C++20. To use it in your project, simply include the file `acehash.hpp`. You can also use CMake utilities (_e.g.,_ FetchContent) to download and include the header during configuration.
+AceHash is provided as a header-only library written in C++20. To use it in your project, simply include the file `acehash.hpp` found in the subdirectory `include/acehash`. You can also use CMake utilities (_e.g.,_ FetchContent) to download and include the header during configuration.
 
 ## Benchmarks
 
