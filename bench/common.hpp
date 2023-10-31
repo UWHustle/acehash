@@ -5,6 +5,8 @@
 #include "acehash/acehash.hpp"
 #include "pthash.hpp"
 
+#include <folly/container/F14Map.h>
+
 #include <chrono>
 #include <random>
 #include <sstream>
@@ -42,12 +44,17 @@ public:
 
   [[nodiscard]] size_t num_bits() const { return function_.num_bits(); }
 
-  [[nodiscard]] std::string description() const {
+  [[nodiscard]] std::string algorithm() const {
     std::ostringstream out;
-    out << "AceHash;" << lambda_ << ';' << alpha_ << ';'
-        << multi_round_partition << ';' << multi_slot_search << ';'
-        << multi_key_evaluate << ';'
+    out << "AceHash;" << multi_round_partition << ';' << multi_slot_search
+        << ';' << multi_key_evaluate << ';'
         << !std::is_same_v<Scheduler, acehash::SerialScheduler>;
+    return out.str();
+  }
+
+  [[nodiscard]] std::string parameters() const {
+    std::ostringstream out;
+    out << lambda_ << ';' << alpha_;
     return out.str();
   }
 
@@ -80,6 +87,10 @@ using AceHashFunctionV4 =
 #ifdef ACEHASH_ENABLE_TBB
 template <typename Key>
 using AceHashFunctionV5 =
+    AceHashFunction<Key, true, true, false, acehash::TBBScheduler>;
+
+template <typename Key>
+using AceHashFunctionV6 =
     AceHashFunction<Key, true, true, true, acehash::TBBScheduler>;
 #endif
 
@@ -126,10 +137,14 @@ public:
     return num_bits;
   }
 
-  [[nodiscard]] std::string description() const {
+  [[nodiscard]] std::string algorithm() const {
     std::ostringstream out;
-    out << "BBHash;" << gamma_ << ';' << parallel_;
+    out << "BBHash;" << parallel_;
     return out.str();
+  }
+
+  [[nodiscard]] std::string parameters() const {
+    return std::to_string(gamma_);
   }
 
 private:
@@ -175,10 +190,15 @@ public:
 
   [[nodiscard]] size_t num_bits() const { return function_.num_bits(); }
 
-  [[nodiscard]] std::string description() const {
+  [[nodiscard]] std::string algorithm() const {
     std::ostringstream out;
-    out << "PTHash;" << c_ << ';' << alpha_ << ';' << Encoder().name() << ';'
-        << minimal;
+    out << "PTHash;" << Encoder().name() << ';' << minimal;
+    return out.str();
+  }
+
+  [[nodiscard]] std::string parameters() const {
+    std::ostringstream out;
+    out << c_ << ';' << alpha_;
     return out.str();
   }
 
@@ -207,6 +227,8 @@ public:
   }
 
   [[nodiscard]] size_t num_bits() const { return 0; }
+
+  [[nodiscard]] std::string parameters() const { return ""; }
 
 private:
   struct ZipIterator {
@@ -249,7 +271,7 @@ public:
   using ConventionalMap<std::unordered_map<Key, Value>, Key, Value>::
       ConventionalMap;
 
-  [[nodiscard]] std::string description() const { return "std::unordered_map"; }
+  [[nodiscard]] std::string algorithm() const { return "std::unordered_map"; }
 };
 
 template <typename Key, typename Value>
@@ -259,92 +281,17 @@ public:
   using ConventionalMap<absl::flat_hash_map<Key, Value>, Key, Value>::
       ConventionalMap;
 
-  [[nodiscard]] std::string description() const {
-    return "absl::flat_hash_map";
-  }
+  [[nodiscard]] std::string algorithm() const { return "absl::flat_hash_map"; }
 };
 
-template <typename Key, typename Value> class VectorMap {
+template <typename Key, typename Value>
+class FollyMap
+    : public ConventionalMap<folly::F14FastMap<Key, Value>, Key, Value> {
 public:
-  VectorMap() : alpha_(0.0) {}
+  using ConventionalMap<folly::F14FastMap<Key, Value>, Key, Value>::
+      ConventionalMap;
 
-  VectorMap(size_t n, const Key *keys, const Value *values, double alpha)
-      : alpha_(alpha) {
-    uint32_t num_slots = std::ceil((double)n / alpha);
-
-    items_.resize(num_slots);
-
-    std::vector<bool> occupied(num_slots);
-
-    for (size_t i = 0; i < n; ++i) {
-      const Key &key = keys[i];
-      const Value &value = values[i];
-
-      auto initial_slot = occupied.begin() + get_initial_slot_index(key);
-
-      auto it = std::find(initial_slot, occupied.end(), false);
-
-      if (it == occupied.end()) {
-        it = std::find(occupied.begin(), initial_slot, false);
-        if (it == initial_slot) {
-          throw std::runtime_error("map is full");
-        }
-      }
-
-      items_[std::distance(occupied.begin(), it)] = {key, value};
-      *it = true;
-    }
-
-    occupied.clear();
-  }
-
-  [[nodiscard]] size_t num_bits() const {
-    return 8 * sizeof(std::pair<Key, Value>) * items_.size();
-  }
-
-  template <typename Callback>
-  void operate(size_t n, const Key *keys, const Callback &callback) {
-    for (size_t i = 0; i < n; ++i) {
-      const Key &key = keys[i];
-
-      auto initial_slot = items_.begin() + get_initial_slot_index(key);
-
-      auto it = std::find_if(initial_slot, items_.end(), [&](const auto &item) {
-        return item.first == key;
-      });
-
-      if (it == items_.end()) {
-        it = std::find_if(items_.begin(), initial_slot, [&](const auto &item) {
-          return item.first == key;
-        });
-
-        if (it == initial_slot) {
-          throw std::runtime_error("key not found");
-        }
-      }
-
-      callback(i, it->second);
-    }
-  }
-
-  void retrieve(size_t n, const Key *keys, Value *values) {
-    operate(n, keys, [&](size_t i, const Value &value) { values[i] = value; });
-  }
-
-  [[nodiscard]] std::string description() const {
-    std::ostringstream out;
-    out << "VectorMap;" << alpha_;
-    return out.str();
-  }
-
-private:
-  uint32_t get_initial_slot_index(const Key &key) {
-    return (uint64_t)hasher_(key) * items_.size() >> 32;
-  }
-
-  double alpha_;
-  acehash::MultiplyAddHasher<Key> hasher_;
-  std::vector<std::pair<Key, Value>> items_;
+  [[nodiscard]] std::string algorithm() const { return "folly::F14FastMap"; }
 };
 
 template <typename Function, typename Key, typename Value> class PerfectMap {
@@ -387,8 +334,10 @@ public:
     return function_.num_bits() + 8 * sizeof(Value) * values_.size();
   }
 
-  [[nodiscard]] std::string description() const {
-    return function_.description();
+  [[nodiscard]] std::string algorithm() const { return function_.algorithm(); }
+
+  [[nodiscard]] std::string parameters() const {
+    return function_.parameters();
   }
 
 private:
@@ -445,44 +394,46 @@ template <typename F> double time(F &&f) {
   return std::chrono::duration<double>(t1 - t0).count();
 }
 
-template <typename Key, typename Generator>
-std::vector<Key> generate_integer_keys(uint32_t n, Generator &generator) {
-  std::unordered_set<Key> keys;
-  keys.reserve(n);
+template <typename Item, typename Generator>
+std::vector<Item> generate_integers(size_t n, Generator &generator) {
+  std::vector<Item> items(n);
+  std::generate(items.begin(), items.end(), [&] {
+    return std::uniform_int_distribution<Item>()(generator);
+  });
 
-  std::uniform_int_distribution<Key> dis;
+  return items;
+}
+
+template <typename Item, typename Generator>
+std::vector<Item> generate_unique_integers(size_t n, Generator &generator) {
+  std::unordered_set<Item> items;
+  items.reserve(n);
+
+  std::uniform_int_distribution<Item> dis;
 
   while (n) {
-    n -= keys.insert(dis(generator)).second;
+    n -= items.insert(dis(generator)).second;
   }
 
-  return {keys.begin(), keys.end()};
+  return {items.begin(), items.end()};
 }
 
-template <typename Value, typename Generator>
-std::vector<Value> generate_integer_values(size_t n, Generator &generator) {
-  std::vector<Value> values(n);
+template <typename Item, typename Generator>
+std::vector<Item>
+sample(size_t n, const std::vector<Item> &items, Generator &generator) {
+  std::uniform_int_distribution<size_t> dis(0, items.size() - 1);
 
-  std::uniform_int_distribution<Value> dis;
-
-  for (Value &value : values) {
-    value = dis(generator);
+  std::vector<Item> sampled_items(n);
+  for (Item &item : sampled_items) {
+    item = items[dis(generator)];
   }
 
-  return values;
+  return sampled_items;
 }
 
-void validate(const std::vector<uint32_t> &indices) {
-  if (std::unordered_set<uint32_t>(indices.begin(), indices.end()).size() !=
-      indices.size()) {
-    throw std::runtime_error("incorrect");
-  }
-}
-
-template <typename Value>
-void validate(const std::vector<Value> &retrieved_values,
-              const std::vector<Value> &values) {
-  if (retrieved_values != values) {
+template <typename Value> void validate(std::vector<Value> &values) {
+  std::sort(values.begin(), values.end());
+  if (std::adjacent_find(values.begin(), values.end()) != values.end()) {
     throw std::runtime_error("incorrect");
   }
 }

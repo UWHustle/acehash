@@ -116,12 +116,12 @@ public:
   };
 
   template <typename ItemIterator, typename Scheduler, typename Function>
-  Partitions<Item>(ItemIterator items,
-                   uint32_t num_items,
-                   uint32_t num_parts,
-                   const Scheduler &scheduler,
-                   const Function &function,
-                   bool multi_round = false) {
+  Partitions(ItemIterator items,
+             uint32_t num_items,
+             uint32_t num_parts,
+             const Scheduler &scheduler,
+             const Function &function,
+             bool multi_round = false) {
     *this = std::move(
         multi_round
             ? two_round(items, num_items, num_parts, scheduler, function)

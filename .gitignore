@@ -9,3 +9,6 @@
 
 # Jupyter
 /bench/results/.ipynb_checkpoints
+
+# Virtual environment
+/venv

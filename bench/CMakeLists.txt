@@ -1,14 +1,9 @@
+find_package(TBB CONFIG REQUIRED)
+find_package(absl CONFIG REQUIRED)
+find_package(folly CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
 include(FetchContent)
-
-FetchContent_Declare(
-        abseil
-        GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-        GIT_TAG 20230802.1
-)
-set(ABSL_PROPAGATE_CXX_STD ON)
-FetchContent_MakeAvailable(abseil)
 
 FetchContent_Declare(
         bbhash
@@ -32,20 +27,39 @@ target_include_directories(
         ${bbhash_SOURCE_DIR}
         ${pthash_SOURCE_DIR}/include
 )
-target_link_libraries(
-        acehash_bench_common
-        INTERFACE
-        acehash
-        absl::base
-        absl::flat_hash_map
-        Threads::Threads
-)
+target_link_libraries(acehash_bench_common INTERFACE acehash TBB::tbb)
+
+add_executable(acehash_bench_intro bench_intro.cpp)
+target_link_libraries(acehash_bench_intro PRIVATE acehash_bench_common)
 
 add_executable(acehash_bench_function bench_function.cpp)
 target_link_libraries(acehash_bench_function PRIVATE acehash_bench_common)
 
-add_executable(acehash_bench_map bench_map.cpp)
-target_link_libraries(acehash_bench_map PRIVATE acehash_bench_common absl::base absl::flat_hash_map)
+add_executable(acehash_bench_join bench_join.cpp)
+target_link_libraries(
+        acehash_bench_join
+        PRIVATE
+        acehash_bench_common
+        absl::flat_hash_map
+        Folly::folly
+)
 
-add_executable(acehash_bench_query bench_query.cpp)
-target_link_libraries(acehash_bench_query PRIVATE acehash_bench_common)
+add_executable(acehash_bench_aggregate bench_aggregate.cpp)
+target_link_libraries(
+        acehash_bench_aggregate
+        PRIVATE
+        acehash_bench_common
+        absl::flat_hash_map
+        Folly::folly
+)
+
+if (DEFINED ACEHASH_DUCKDB_INCLUDE_DIR AND DEFINED ACEHASH_DUCKDB_LIBRARY)
+    message(STATUS "Using DuckDB include directory: ${ACEHASH_DUCKDB_INCLUDE_DIR}")
+    message(STATUS "Using DuckDB library: ${ACEHASH_DUCKDB_LIBRARY}")
+    target_compile_definitions(acehash_bench_join PRIVATE ACEHASH_ENABLE_DUCKDB)
+    target_include_directories(acehash_bench_join PRIVATE ${ACEHASH_DUCKDB_INCLUDE_DIR})
+    target_link_libraries(acehash_bench_join PRIVATE ${ACEHASH_DUCKDB_LIBRARY})
+    target_compile_definitions(acehash_bench_aggregate PRIVATE ACEHASH_ENABLE_DUCKDB)
+    target_include_directories(acehash_bench_aggregate PRIVATE ${ACEHASH_DUCKDB_INCLUDE_DIR})
+    target_link_libraries(acehash_bench_aggregate PRIVATE ${ACEHASH_DUCKDB_LIBRARY})
+endif ()
