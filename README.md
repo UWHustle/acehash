@@ -24,4 +24,4 @@ cmake .. \
   -DCMAKE_CXX_FLAGS="-march=native"
 ```
 
-Finally, run the desired benchmark executables in the `bench` subdirectory. Each executable writes its results to a CSV file.
+Finally, run the desired benchmark executables in the `bench` subdirectory. Each executable writes its results to a CSV file. You can then use the notebook `analysis.ipynb` in the subdirectory `bench/results` to produce the plots.
